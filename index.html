@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stereo Visualizer & Oscilloscope</title>
+<style>
+  body {
+    margin: 0;
+    background: #0b0b0f;
+    color: white;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  header {
+    background: #12121b;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 8px;
+  }
+
+  .tab {
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: #1e1e2a;
+    font-weight: 500;
+  }
+
+  .tab.active {
+    background: #4a4a6a;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  button {
+    background: #1e1e2a;
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  button:hover {
+    background: #2a2a3d;
+  }
+
+  input[type="range"] {
+    width: 250px;
+  }
+
+  canvas {
+    flex: 1;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="tabs">
+    <div class="tab active" data-mode="line">Visualizer</div>
+    <div class="tab" data-mode="osc">Oscilloscope</div>
+  </div>
+
+  <div class="controls">
+    <button id="playPauseBtn">Pause</button>
+    <button id="stopBtn">Stop</button>
+    <input type="range" id="progress" min="0" max="100" value="0">
+    <input type="file" id="audioFile" accept="audio/*">
+  </div>
+</header>
+
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const fileInput = document.getElementById("audioFile");
+const playPauseBtn = document.getElementById("playPauseBtn");
+const stopBtn = document.getElementById("stopBtn");
+const progress = document.getElementById("progress");
+const tabs = document.querySelectorAll(".tab");
+
+let mode = "line"; // visualizer by default
+tabs.forEach(tab => {
+  tab.addEventListener("click", () => {
+    tabs.forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    mode = tab.dataset.mode;
+  });
+});
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight - document.querySelector('header').offsetHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+let audioContext, analyserL, analyserR, audio;
+let smoothLeft = [], smoothRight = [];
+let isPlaying = false;
+
+const SMOOTHING = 0.8;
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  if (audio) audio.pause();
+
+  audio = new Audio(URL.createObjectURL(file));
+  audio.crossOrigin = "anonymous";
+  audio.play();
+
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioContext.createMediaElementSource(audio);
+  const splitter = audioContext.createChannelSplitter(2);
+
+  analyserL = audioContext.createAnalyser();
+  analyserR = audioContext.createAnalyser();
+  analyserL.fftSize = analyserR.fftSize = 1024;
+
+  source.connect(splitter);
+  splitter.connect(analyserL, 0);
+  splitter.connect(analyserR, 1);
+  source.connect(audioContext.destination);
+
+  smoothLeft = new Array(analyserL.fftSize).fill(128);
+  smoothRight = new Array(analyserR.fftSize).fill(128);
+
+  isPlaying = true;
+  playPauseBtn.textContent = "Pause";
+
+  // Update progress bar in real-time
+  const updateProgress = () => {
+    if (!audio || !audio.duration) return;
+    progress.value = (audio.currentTime / audio.duration) * 100;
+    if (isPlaying) requestAnimationFrame(updateProgress);
+  };
+  updateProgress();
+
+  draw();
+});
+
+playPauseBtn.addEventListener("click", () => {
+  if (!audio) return;
+  if (audio.paused) {
+    audio.play();
+    playPauseBtn.textContent = "Pause";
+    isPlaying = true;
+  } else {
+    audio.pause();
+    playPauseBtn.textContent = "Play";
+    isPlaying = false;
+  }
+});
+
+stopBtn.addEventListener("click", () => {
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
+  playPauseBtn.textContent = "Play";
+  isPlaying = false;
+  progress.value = 0;
+});
+
+progress.addEventListener("input", () => {
+  if (!audio || !audio.duration) return;
+  audio.currentTime = (progress.value / 100) * audio.duration;
+});
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (!analyserL || !analyserR || !isPlaying) return;
+
+  const len = analyserL.fftSize;
+  const left = new Uint8Array(len);
+  const right = new Uint8Array(len);
+
+  analyserL.getByteTimeDomainData(left);
+  analyserR.getByteTimeDomainData(right);
+
+  ctx.fillStyle = "#0b0b0f";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const midX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const amp = canvas.height * 0.35;
+
+  if (mode === "line") {
+    // LEFT
+    ctx.strokeStyle = "#b46cff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      smoothLeft[i] = smoothLeft[i] * SMOOTHING + left[i] * (1 - SMOOTHING);
+      const x = (i / len) * midX;
+      const y = centerY + ((smoothLeft[i] - 128) / 128) * amp;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // RIGHT
+    ctx.strokeStyle = "#4cc9ff";
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      smoothRight[i] = smoothRight[i] * SMOOTHING + right[i] * (1 - SMOOTHING);
+      const x = midX + (i / len) * midX;
+      const y = centerY + ((smoothRight[i] - 128) / 128) * amp;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  } else if (mode === "osc") {
+    // XY Oscilloscope
+    ctx.strokeStyle = "#b46cff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      const x = ((left[i] - 128) / 128) * midX * 0.9 + midX / 2;
+      const y = ((right[i] - 128) / 128) * amp + centerY;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+</script>
+
+</body>
+</html>
