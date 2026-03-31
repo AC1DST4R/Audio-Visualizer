@@ -2,91 +2,120 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Stereo Visualizer & Oscilloscope</title>
+<title>Visualizer Pro Ultimate</title>
+
 <style>
-  body {
-    margin: 0;
-    background: #0b0b0f;
-    color: white;
-    font-family: system-ui, sans-serif;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-  }
+body {
+  margin: 0;
+  background: #0b0b0f;
+  color: white;
+  font-family: system-ui;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
 
-  header {
-    background: #12121b;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
+header {
+  background: #12121b;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
 
-  .tabs {
-    display: flex;
-    gap: 8px;
-  }
+.tabs, .controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
-  .tab {
-    padding: 6px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    background: #1e1e2a;
-    font-weight: 500;
-  }
+.tab, button {
+  background: #1e1e2a;
+  border: none;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
 
-  .tab.active {
-    background: #4a4a6a;
-  }
+.tab.active {
+  background: #4a4a6a;
+}
 
-  .controls {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
+canvas {
+  flex: 1;
+}
 
-  button {
-    background: #1e1e2a;
-    border: none;
-    color: white;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-  }
+.panel {
+  position: absolute;
+  top: 70px;
+  right: 10px;
+  background: #1a1a26;
+  padding: 12px;
+  border-radius: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+}
 
-  button:hover {
-    background: #2a2a3d;
-  }
+.panel.active {
+  display: flex;
+}
 
-  input[type="range"] {
-    width: 250px;
-  }
+label {
+  font-size: 12px;
+}
 
-  canvas {
-    flex: 1;
-    display: block;
-  }
+input[type="range"] {
+  width: 160px;
+}
 </style>
 </head>
+
 <body>
 
 <header>
   <div class="tabs">
-    <div class="tab active" data-mode="line">Visualizer</div>
-    <div class="tab" data-mode="osc">Oscilloscope</div>
+    <div class="tab active" data-mode="line">Wave</div>
+    <div class="tab" data-mode="osc">Osc</div>
+    <div class="tab" data-mode="bars">Bars</div>
   </div>
 
   <div class="controls">
     <button id="playPauseBtn">Pause</button>
     <button id="stopBtn">Stop</button>
-    <input type="range" id="progress" min="0" max="100" value="0">
+    <button id="optionsBtn">Options</button>
     <input type="file" id="audioFile" accept="audio/*">
   </div>
 </header>
+
+<div class="panel" id="panel">
+
+  <label>Color <input type="color" id="colorPicker" value="#b46cff"></label>
+  <label><input type="checkbox" id="rainbow"> Rainbow</label>
+
+  <label>Gain <input type="range" id="gain" min="0.5" max="3" step="0.1" value="1"></label>
+
+  <label>
+    Speed: <span id="speedLabel">1.0x</span><br>
+    <input type="range" id="speed" min="0.1" max="2" step="0.1" value="1">
+  </label>
+
+  <label><input type="checkbox" id="pitchToggle"> Pitch Change</label>
+  <label><input type="checkbox" id="autoPitch"> Auto Pitch</label>
+
+  <label><input type="checkbox" id="devMode"> Dev Mode</label>
+
+  <div id="devControls" style="display:none;">
+    <label>X <input type="range" id="posX" min="-500" max="500" value="0"></label>
+    <label>Y <input type="range" id="posY" min="-500" max="500" value="0"></label>
+    <label>Scale <input type="range" id="scale" min="0.2" max="2" step="0.1" value="1"></label>
+  </div>
+
+</div>
 
 <canvas id="canvas"></canvas>
 
@@ -94,154 +123,254 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-const fileInput = document.getElementById("audioFile");
+const tabs = document.querySelectorAll(".tab");
 const playPauseBtn = document.getElementById("playPauseBtn");
 const stopBtn = document.getElementById("stopBtn");
-const progress = document.getElementById("progress");
-const tabs = document.querySelectorAll(".tab");
+const fileInput = document.getElementById("audioFile");
 
-let mode = "line"; // visualizer by default
+const optionsBtn = document.getElementById("optionsBtn");
+const panel = document.getElementById("panel");
+
+const colorPicker = document.getElementById("colorPicker");
+const rainbowToggle = document.getElementById("rainbow");
+
+const gainControl = document.getElementById("gain");
+
+const speedControl = document.getElementById("speed");
+const speedLabel = document.getElementById("speedLabel");
+
+const pitchToggle = document.getElementById("pitchToggle");
+const autoPitchToggle = document.getElementById("autoPitch");
+
+const devModeToggle = document.getElementById("devMode");
+const devControls = document.getElementById("devControls");
+
+const posX = document.getElementById("posX");
+const posY = document.getElementById("posY");
+const scale = document.getElementById("scale");
+
+let mode = "line";
+let audioContext, source, analyserL, analyserR, analyserFreq, audio;
+let isPlaying = false;
+let animationId;
+
+// Tabs
 tabs.forEach(tab => {
-  tab.addEventListener("click", () => {
+  tab.onclick = () => {
     tabs.forEach(t => t.classList.remove("active"));
     tab.classList.add("active");
     mode = tab.dataset.mode;
-  });
+  };
 });
 
+// Options toggle
+optionsBtn.onclick = () => panel.classList.toggle("active");
+
+// Dev mode
+devModeToggle.onchange = () => {
+  devControls.style.display = devModeToggle.checked ? "block" : "none";
+};
+
+// Resize
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight - document.querySelector('header').offsetHeight;
+  const dpr = window.devicePixelRatio || 1;
+  const h = window.innerHeight - document.querySelector("header").offsetHeight;
+
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = h + "px";
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resize);
 resize();
 
-let audioContext, analyserL, analyserR, audio;
-let smoothLeft = [], smoothRight = [];
-let isPlaying = false;
+// Speed + Pitch logic
+function updateSpeed() {
+  const speed = Number(speedControl.value);
+  speedLabel.textContent = speed.toFixed(1) + "x";
 
-const SMOOTHING = 0.8;
+  if (audio) {
+    audio.playbackRate = speed;
 
-fileInput.addEventListener("change", () => {
-  const file = fileInput.files[0];
+    if (autoPitchToggle.checked) {
+      audio.preservesPitch = false;
+    } else if (pitchToggle.checked) {
+      audio.preservesPitch = false;
+    } else {
+      audio.preservesPitch = true;
+    }
+  }
+}
+
+speedControl.addEventListener("input", updateSpeed);
+
+pitchToggle.addEventListener("change", () => {
+  if (pitchToggle.checked) autoPitchToggle.checked = false;
+  updateSpeed();
+});
+
+autoPitchToggle.addEventListener("change", () => {
+  if (autoPitchToggle.checked) pitchToggle.checked = false;
+  updateSpeed();
+});
+
+// Load audio
+fileInput.onchange = e => {
+  const file = e.target.files[0];
   if (!file) return;
 
   if (audio) audio.pause();
+  if (animationId) cancelAnimationFrame(animationId);
 
   audio = new Audio(URL.createObjectURL(file));
-  audio.crossOrigin = "anonymous";
-  audio.play();
+  audioContext = new AudioContext();
 
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const source = audioContext.createMediaElementSource(audio);
+  source = audioContext.createMediaElementSource(audio);
+
   const splitter = audioContext.createChannelSplitter(2);
 
   analyserL = audioContext.createAnalyser();
   analyserR = audioContext.createAnalyser();
-  analyserL.fftSize = analyserR.fftSize = 1024;
+  analyserFreq = audioContext.createAnalyser();
+
+  analyserL.fftSize = analyserR.fftSize = analyserFreq.fftSize = 2048;
 
   source.connect(splitter);
   splitter.connect(analyserL, 0);
   splitter.connect(analyserR, 1);
+
+  source.connect(analyserFreq);
   source.connect(audioContext.destination);
 
-  smoothLeft = new Array(analyserL.fftSize).fill(128);
-  smoothRight = new Array(analyserR.fftSize).fill(128);
-
+  audio.play();
   isPlaying = true;
   playPauseBtn.textContent = "Pause";
 
-  // Update progress bar in real-time
-  const updateProgress = () => {
-    if (!audio || !audio.duration) return;
-    progress.value = (audio.currentTime / audio.duration) * 100;
-    if (isPlaying) requestAnimationFrame(updateProgress);
-  };
-  updateProgress();
-
+  updateSpeed();
   draw();
-});
+};
 
-playPauseBtn.addEventListener("click", () => {
+// Controls
+playPauseBtn.onclick = () => {
   if (!audio) return;
+
   if (audio.paused) {
     audio.play();
-    playPauseBtn.textContent = "Pause";
     isPlaying = true;
+    playPauseBtn.textContent = "Pause";
+    draw();
   } else {
     audio.pause();
-    playPauseBtn.textContent = "Play";
     isPlaying = false;
+    playPauseBtn.textContent = "Play";
   }
-});
+};
 
-stopBtn.addEventListener("click", () => {
+stopBtn.onclick = () => {
   if (!audio) return;
   audio.pause();
   audio.currentTime = 0;
-  playPauseBtn.textContent = "Play";
   isPlaying = false;
-  progress.value = 0;
-});
+  playPauseBtn.textContent = "Play";
+};
 
-progress.addEventListener("input", () => {
-  if (!audio || !audio.duration) return;
-  audio.currentTime = (progress.value / 100) * audio.duration;
-});
-
+// Draw
 function draw() {
-  requestAnimationFrame(draw);
-  if (!analyserL || !analyserR || !isPlaying) return;
+  animationId = requestAnimationFrame(draw);
+  if (!isPlaying) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.clearRect(0, 0, w, h);
+
+  const gain = Number(gainControl.value);
+  const speed = Number(speedControl.value);
+  const visualSpeed = 0.5 + speed * 0.5;
+
+  const offsetX = Number(posX.value);
+  const offsetY = Number(posY.value);
+  const s = Number(scale.value);
 
   const len = analyserL.fftSize;
+
   const left = new Uint8Array(len);
   const right = new Uint8Array(len);
+  const freq = new Uint8Array(analyserFreq.frequencyBinCount);
 
   analyserL.getByteTimeDomainData(left);
   analyserR.getByteTimeDomainData(right);
+  analyserFreq.getByteFrequencyData(freq);
 
-  ctx.fillStyle = "#0b0b0f";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(w / 2 + offsetX, h / 2 + offsetY);
+  ctx.scale(s, s);
 
-  const midX = canvas.width / 2;
-  const centerY = canvas.height / 2;
-  const amp = canvas.height * 0.35;
+  const baseColor = colorPicker.value;
 
+  function getColor(i) {
+    return rainbowToggle.checked
+      ? `hsl(${(i * 2 + performance.now() * 0.05 * speed) % 360},100%,60%)`
+      : baseColor;
+  }
+
+  // Wave
   if (mode === "line") {
-    // LEFT
-    ctx.strokeStyle = "#b46cff";
-    ctx.lineWidth = 2;
+    const amp = h * 0.25 * gain;
+
     ctx.beginPath();
     for (let i = 0; i < len; i++) {
-      smoothLeft[i] = smoothLeft[i] * SMOOTHING + left[i] * (1 - SMOOTHING);
-      const x = (i / len) * midX;
-      const y = centerY + ((smoothLeft[i] - 128) / 128) * amp;
+      const x = (i / len) * w - w / 2;
+      const y = -amp + ((left[i] - 128) / 128) * amp * visualSpeed;
+      ctx.strokeStyle = getColor(i);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    // RIGHT
-    ctx.strokeStyle = "#4cc9ff";
     ctx.beginPath();
     for (let i = 0; i < len; i++) {
-      smoothRight[i] = smoothRight[i] * SMOOTHING + right[i] * (1 - SMOOTHING);
-      const x = midX + (i / len) * midX;
-      const y = centerY + ((smoothRight[i] - 128) / 128) * amp;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  } else if (mode === "osc") {
-    // XY Oscilloscope
-    ctx.strokeStyle = "#b46cff";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let i = 0; i < len; i++) {
-      const x = ((left[i] - 128) / 128) * midX * 0.9 + midX / 2;
-      const y = ((right[i] - 128) / 128) * amp + centerY;
+      const x = (i / len) * w - w / 2;
+      const y = amp + ((right[i] - 128) / 128) * amp * visualSpeed;
+      ctx.strokeStyle = getColor(i);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
   }
+
+  // Osc
+  else if (mode === "osc") {
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      const x = ((left[i] - 128) / 128) * (w * 0.25 * gain);
+      const y = ((right[i] - 128) / 128) * (h * 0.25 * gain * visualSpeed);
+      ctx.strokeStyle = getColor(i);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Bars
+  else if (mode === "bars") {
+    const barWidth = w / freq.length;
+
+    for (let i = 0; i < freq.length; i++) {
+      const val = freq[i] / 255;
+      const barHeight = val * h * 0.4 * gain * visualSpeed;
+
+      ctx.fillStyle = getColor(i);
+
+      ctx.fillRect(
+        i * barWidth - w / 2,
+        h / 2 - barHeight,
+        barWidth - 1,
+        barHeight
+      );
+    }
+  }
+
+  ctx.restore();
 }
 </script>
 
